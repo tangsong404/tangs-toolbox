@@ -1,0 +1,4 @@
+[submodule "ccursor-cli/vendor/CCursor"]
+	path = ccursor-cli/vendor/CCursor
+	url = https://github.com/CometixSpace/CCursor.git
+	shallow = true

@@ -1,0 +1,54 @@
+# ── dependencies ──
+node_modules/
+.pnpm-store/
+.yarn/
+bower_components/
+
+# ── build output ──
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# ── ccursor-cli runtime / packaging ──
+# (ccursor-cli/.gitignore also covers these; kept here so the root repo stays clean)
+ccursor-cli/logs/
+ccursor-cli/*.pid
+ccursor-cli/byok-history.json
+ccursor-cli/alt/
+ccursor-cli/tools/
+ccursor-cli/*.tgz
+ccursor-cli/vendor/CCursor/Cursor++/node_modules/
+
+# ── logs ──
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ── env / secrets ──
+.env
+.env.*
+!.env.example
+
+# ── caches ──
+.cache/
+.temp/
+.tmp/
+.npm/
+.eslintcache
+.stylelintcache
+
+# ── editors / IDEs ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS files ──
+.DS_Store
+Thumbs.db
+desktop.ini

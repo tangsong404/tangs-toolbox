@@ -1,0 +1,55 @@
+{
+  "skill_name": "everything-find",
+  "evals": [
+    {
+      "id": 0,
+      "name": "locate-python",
+      "prompt": "能帮我找一下电脑上装了几个 python.exe 吗？分别在什么位置？",
+      "expected_output": "Uses es.exe to find python.exe locations, reports count and full paths of each installation",
+      "files": [],
+      "expectations": [
+        "Uses es.exe for the search",
+        "Reports the count of python.exe instances found",
+        "Shows full paths of found python.exe locations"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "search-pdfs",
+      "prompt": "帮我搜一下电脑里所有文件名带 'report' 的 PDF 文件，显示前 20 个",
+      "expected_output": "Uses es.exe to search for PDF files with 'report' in name, limits to 20 results",
+      "files": [],
+      "expectations": [
+        "Uses es.exe for the search",
+        "Applies a limit of 20 results",
+        "Combines file extension (.pdf) with name pattern (report) in the search",
+        "Shows full paths of found files"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "locate-dependency",
+      "prompt": "我跑 Python 脚本报错说找不到 numpy，但我明明装过。能帮我找一下 numpy 装在哪了吗？",
+      "expected_output": "Uses es.exe to locate numpy package directories or files on the system, reports found locations",
+      "files": [],
+      "expectations": [
+        "Uses es.exe to locate numpy-related files or directories",
+        "Searches for numpy in common Python package locations (site-packages, conda envs, etc.)",
+        "Reports found numpy installation paths to the user",
+        "Provides helpful suggestions if numpy is not found in the expected locations"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "wrong-context",
+      "prompt": "帮我搜一下当前项目里所有包含 'TODO' 的代码文件",
+      "expected_output": "Recognizes this is about content search in the current project and uses Grep instead of es.exe",
+      "files": [],
+      "expectations": [
+        "Does NOT use es.exe for this task",
+        "Uses Grep or similar content-search tool instead",
+        "Searches within the current project directory specifically"
+      ]
+    }
+  ]
+}

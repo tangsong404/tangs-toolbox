@@ -1,0 +1,437 @@
+diff --git a/Cursor++/src/server/database/sqlite.ts b/Cursor++/src/server/database/sqlite.ts
+index 6b16c1b..900f4c2 100644
+--- a/Cursor++/src/server/database/sqlite.ts
++++ b/Cursor++/src/server/database/sqlite.ts
+@@ -1,124 +1,16 @@
+ /**
+- * SQLite 持久层 — @vscode/sqlite3 (Cursor 内置)
++ * SQLite 持久层 — 独立运行版 (node:sqlite)
+  *
+- * 通过 createRequire 从 Cursor app 路径动态加载 @vscode/sqlite3，
+- * 避免 bundle 原生模块。该模块的 native binding 已与 Cursor 的 Electron ABI 匹配。
+- *
+- * API 说明:
+- * - @vscode/sqlite3 基于 node-sqlite3，是异步回调 API
+- * - 本 wrapper 提供 Promise 化的接口（AsyncDatabase / AsyncStatement）
+- * - getAgentDatabase() 保持同步返回已打开的实例
+- * - initDatabase() 为异步，必须在 startServer() 时先调用
++ * 原实现从 Cursor app 里动态 require `@vscode/sqlite3`。
++ * 我们的独立 BYOK server 不在 Cursor 里跑，改用 Node 内置的 `node:sqlite`，
++ * 对外保持完全相同的异步接口 (AsyncDatabase / AsyncStatement)。
+  */
+-import { existsSync, mkdirSync } from 'node:fs'
+-import { createRequire } from 'node:module'
+-import { homedir, platform } from 'node:os'
+-import { dirname, join, resolve } from 'node:path'
++import { mkdirSync } from 'node:fs'
++import { dirname } from 'node:path'
++import { DatabaseSync, type StatementSync } from 'node:sqlite'
+ import { getDatabaseFilePath } from '../config/paths'
+ import { logger } from '../logger'
+ 
+-// ---------- dynamic require of @vscode/sqlite3 ----------
+-
+-type Sqlite3Module = any
+-
+-let sqlite3Module: Sqlite3Module | null = null
+-
+-/**
+- * 候选 Cursor resources/app 目录
+- *
+- * 策略 (按优先级):
+- *   1. 测试用 env override: CURSOR_APP_ROOT
+- *   2. 相对定位: 从扩展自身的 __dirname 往上 3 层
+- *      我们装在 <cursorRoot>/resources/app/extensions/cursor2plus/dist/extension.js
+- *      __dirname = .../extensions/cursor2plus/dist
+- *      ../../.. = .../app  ← target
+- *      这一条天然跨平台 (mac/linux/win 无关),优先级最高的自动路径
+- *   3. 平台硬编码 fallback: 当 1/2 都失败时的防御性兜底
+- *      包括 Windows 的常见安装路径 (per-user / system-wide / scoop)
+- */
+-function getCursorAppCandidates(): string[] {
+-  const candidates: string[] = []
+-
+-  const envPath = process.env.CURSOR_APP_ROOT
+-  if (envPath && existsSync(join(envPath, 'package.json')))
+-    candidates.push(envPath)
+-
+-  // 相对扩展自身位置反推 —— 真正的跨平台方案
+-  try {
+-    const relFromSelf = resolve(__dirname, '..', '..', '..')
+-    candidates.push(relFromSelf)
+-  }
+-  catch {}
+-
+-  const home = homedir()
+-  switch (platform()) {
+-    case 'darwin':
+-      candidates.push(
+-        '/Applications/Cursor.app/Contents/Resources/app',
+-        join(home, 'Applications/Cursor.app/Contents/Resources/app'),
+-      )
+-      break
+-    case 'linux':
+-      candidates.push(
+-        '/opt/Cursor/resources/app',
+-        '/opt/cursor/resources/app',
+-        '/usr/share/cursor/resources/app',
+-        '/usr/lib/cursor/resources/app',
+-        join(home, '.local/share/cursor/resources/app'),
+-      )
+-      break
+-    case 'win32': {
+-      const localAppData = process.env.LOCALAPPDATA || join(home, 'AppData', 'Local')
+-      const programFiles = process.env.ProgramFiles || 'C:\\Program Files'
+-      const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)'
+-      candidates.push(
+-        join(localAppData, 'Programs', 'cursor', 'resources', 'app'),
+-        join(localAppData, 'Programs', 'Cursor', 'resources', 'app'),
+-        join(programFiles, 'Cursor', 'resources', 'app'),
+-        join(programFilesX86, 'Cursor', 'resources', 'app'),
+-        join(home, 'scoop', 'apps', 'cursor', 'current', 'resources', 'app'),
+-      )
+-      break
+-    }
+-  }
+-
+-  return candidates
+-}
+-
+-function loadSqlite3(): Sqlite3Module {
+-  if (sqlite3Module)
+-    return sqlite3Module
+-
+-  const candidates = getCursorAppCandidates()
+-  const tried: Array<{ path: string, error: string }> = []
+-
+-  for (const candidate of candidates) {
+-    const pkgJson = join(candidate, 'package.json')
+-    if (!existsSync(pkgJson)) {
+-      tried.push({ path: candidate, error: 'no package.json' })
+-      continue
+-    }
+-    try {
+-      const req = createRequire(pkgJson)
+-      const mod = req('@vscode/sqlite3')
+-      logger.info({ source: candidate }, '[DB] loaded @vscode/sqlite3 from Cursor app')
+-      sqlite3Module = mod
+-      return mod
+-    }
+-    catch (e) {
+-      tried.push({ path: candidate, error: (e as Error).message })
+-    }
+-  }
+-
+-  logger.error({ tried }, '[DB] failed to load @vscode/sqlite3 from any candidate')
+-  throw new Error(
+-    `Failed to load @vscode/sqlite3. Tried ${candidates.length} paths — see logs.`
+-    + ' Set CURSOR_APP_ROOT env var to override.',
+-  )
+-}
+-
+-// ---------- wrapper types ----------
+-
+ export interface RunResult {
+   lastID: number
+   changes: number
+@@ -141,108 +33,50 @@ export interface AsyncDatabase {
+   close: () => Promise<void>
+ }
+ 
+-// ---------- wrapper implementation ----------
++function bindArgs(params?: unknown): any[] {
++  if (params === undefined || params === null)
++    return []
++  if (Array.isArray(params))
++    return params
++  // Named parameters object.
++  return [params]
++}
+ 
+-function wrapStatement(stmt: any): AsyncStatement {
++function wrapStatement(stmt: StatementSync): AsyncStatement {
+   return {
+-    run(params?: unknown): Promise<RunResult> {
+-      return new Promise((resolve, reject) => {
+-        const cb = function (this: any, err: Error | null) {
+-          if (err)
+-            reject(err)
+-          else resolve({ lastID: this.lastID as number, changes: this.changes as number })
+-        }
+-        if (params === undefined)
+-          stmt.run(cb)
+-        else
+-          stmt.run(params, cb)
+-      })
++    async run(params?: unknown): Promise<RunResult> {
++      const r = stmt.run(...bindArgs(params)) as { changes: number | bigint, lastInsertRowid: number | bigint }
++      return { lastID: Number(r.lastInsertRowid), changes: Number(r.changes) }
+     },
+-    get<T = unknown>(params?: unknown): Promise<T | undefined> {
+-      return new Promise((resolve, reject) => {
+-        const cb = (err: Error | null, row: T | undefined) => {
+-          if (err)
+-            reject(err)
+-          else resolve(row)
+-        }
+-        if (params === undefined)
+-          stmt.get(cb)
+-        else
+-          stmt.get(params, cb)
+-      })
++    async get<T = unknown>(params?: unknown): Promise<T | undefined> {
++      return stmt.get(...bindArgs(params)) as T | undefined
+     },
+-    all<T = unknown>(params?: unknown): Promise<T[]> {
+-      return new Promise((resolve, reject) => {
+-        const cb = (err: Error | null, rows: T[] | undefined) => {
+-          if (err)
+-            reject(err)
+-          else resolve(rows || [])
+-        }
+-        if (params === undefined)
+-          stmt.all(cb)
+-        else
+-          stmt.all(params, cb)
+-      })
++    async all<T = unknown>(params?: unknown): Promise<T[]> {
++      return stmt.all(...bindArgs(params)) as T[]
+     },
+-    finalize(): Promise<void> {
+-      return new Promise((resolve, reject) => {
+-        stmt.finalize((err: Error | null) => err ? reject(err) : resolve())
+-      })
++    async finalize(): Promise<void> {
++      // StatementSync 无需显式 finalize。
+     },
+   }
+ }
+ 
+-function wrapDatabase(rawDb: any): AsyncDatabase {
++function wrapDatabase(rawDb: DatabaseSync): AsyncDatabase {
+   const db: AsyncDatabase = {
+-    prepare(sql: string): AsyncStatement {
+-      return wrapStatement(rawDb.prepare(sql))
++    prepare: (sql: string) => wrapStatement(rawDb.prepare(sql)),
++    async exec(sql: string): Promise<void> {
++      rawDb.exec(sql)
+     },
+-    exec(sql: string): Promise<void> {
+-      return new Promise((resolve, reject) => {
+-        rawDb.exec(sql, (err: Error | null) => err ? reject(err) : resolve())
+-      })
++    async run(sql: string, params?: unknown): Promise<RunResult> {
++      const r = rawDb.prepare(sql).run(...bindArgs(params)) as { changes: number | bigint, lastInsertRowid: number | bigint }
++      return { lastID: Number(r.lastInsertRowid), changes: Number(r.changes) }
+     },
+-    run(sql: string, params?: unknown): Promise<RunResult> {
+-      return new Promise((resolve, reject) => {
+-        const cb = function (this: any, err: Error | null) {
+-          if (err)
+-            reject(err)
+-          else resolve({ lastID: this.lastID as number, changes: this.changes as number })
+-        }
+-        if (params === undefined)
+-          rawDb.run(sql, cb)
+-        else
+-          rawDb.run(sql, params, cb)
+-      })
++    async get<T = unknown>(sql: string, params?: unknown): Promise<T | undefined> {
++      return rawDb.prepare(sql).get(...bindArgs(params)) as T | undefined
+     },
+-    get<T = unknown>(sql: string, params?: unknown): Promise<T | undefined> {
+-      return new Promise((resolve, reject) => {
+-        const cb = (err: Error | null, row: T | undefined) => {
+-          if (err)
+-            reject(err)
+-          else resolve(row)
+-        }
+-        if (params === undefined)
+-          rawDb.get(sql, cb)
+-        else
+-          rawDb.get(sql, params, cb)
+-      })
+-    },
+-    all<T = unknown>(sql: string, params?: unknown): Promise<T[]> {
+-      return new Promise((resolve, reject) => {
+-        const cb = (err: Error | null, rows: T[] | undefined) => {
+-          if (err)
+-            reject(err)
+-          else resolve(rows || [])
+-        }
+-        if (params === undefined)
+-          rawDb.all(sql, cb)
+-        else
+-          rawDb.all(sql, params, cb)
+-      })
++    async all<T = unknown>(sql: string, params?: unknown): Promise<T[]> {
++      return rawDb.prepare(sql).all(...bindArgs(params)) as T[]
+     },
+     async transaction<T>(fn: () => Promise<T>): Promise<T> {
+-      // 手动 BEGIN/COMMIT/ROLLBACK，注意 fn 内的 db 操作必须严格 await
+       await db.exec('BEGIN')
+       try {
+         const result = await fn()
+@@ -257,17 +91,13 @@ function wrapDatabase(rawDb: any): AsyncDatabase {
+         throw e
+       }
+     },
+-    close(): Promise<void> {
+-      return new Promise((resolve, reject) => {
+-        rawDb.close((err: Error | null) => err ? reject(err) : resolve())
+-      })
++    async close(): Promise<void> {
++      rawDb.close()
+     },
+   }
+   return db
+ }
+ 
+-// ---------- module state ----------
+-
+ let db: AsyncDatabase | null = null
+ let dbPath: string | null = null
+ 
+@@ -276,7 +106,6 @@ export function resolveAgentDatabasePath(): string {
+ }
+ 
+ async function initializeSchema(database: AsyncDatabase): Promise<void> {
+-  // WAL 模式 + 性能 pragmas
+   await database.exec('PRAGMA journal_mode = WAL')
+   await database.exec('PRAGMA synchronous = NORMAL')
+   await database.exec('PRAGMA foreign_keys = ON')
+@@ -326,14 +155,10 @@ async function initializeSchema(database: AsyncDatabase): Promise<void> {
+       ON conversation_summaries(conversation_id, kind, updated_at DESC);
+   `)
+ 
+-  // ── Schema 迁移: conversation_checkpoints 新增 kind 列 ──
+-  // 旧表 PRIMARY KEY 是 conversation_id (单列), 新表需要 (conversation_id, kind) 复合键。
+-  // SQLite 不支持 ALTER PRIMARY KEY, 只能重建表。
+   try {
+     await database.get(`SELECT kind FROM conversation_checkpoints LIMIT 1`)
+   }
+   catch {
+-    // kind 列不存在 → 旧 schema, 需要迁移
+     await database.exec(`
+       ALTER TABLE conversation_checkpoints RENAME TO conversation_checkpoints_old;
+       CREATE TABLE conversation_checkpoints (
+@@ -356,7 +181,6 @@ async function initializeSchema(database: AsyncDatabase): Promise<void> {
+     `)
+   }
+ 
+-  // ── Schema 迁移: conversation_checkpoints 新增 turn_blob_ids_json 列 ──
+   try {
+     await database.get(`SELECT turn_blob_ids_json FROM conversation_checkpoints LIMIT 1`)
+   }
+@@ -368,10 +192,6 @@ async function initializeSchema(database: AsyncDatabase): Promise<void> {
+   }
+ }
+ 
+-/**
+- * 异步初始化 DB。必须在 getAgentDatabase() 首次使用前调用。
+- * 在 startServer() 中调用。
+- */
+ export async function initDatabase(): Promise<void> {
+   const nextPath = resolveAgentDatabasePath()
+   if (db && dbPath === nextPath)
+@@ -384,29 +204,16 @@ export async function initDatabase(): Promise<void> {
+ 
+   mkdirSync(dirname(nextPath), { recursive: true })
+ 
+-  const sqlite3 = loadSqlite3()
+-  const rawDb = await new Promise<unknown>((resolve, reject) => {
+-    const instance = new (sqlite3 as any).Database(nextPath, (err: Error | null) => {
+-      if (err)
+-        reject(err)
+-      else resolve(instance)
+-    })
+-  })
+-
++  const rawDb = new DatabaseSync(nextPath)
+   db = wrapDatabase(rawDb)
+   dbPath = nextPath
+   await initializeSchema(db)
+   logger.info({ agentDbPath: nextPath }, '[DB] agent sqlite persistence ready')
+ }
+ 
+-/**
+- * 同步获取已初始化的 DB 实例。
+- * 调用前必须确保 initDatabase() 已完成。
+- */
+ export function getAgentDatabase(): AsyncDatabase {
+-  if (!db) {
++  if (!db)
+     throw new Error('Database not initialized. Call initDatabase() first.')
+-  }
+   return db
+ }
+ 
+@@ -418,15 +225,6 @@ export async function closeAgentDatabase(): Promise<void> {
+   dbPath = null
+ }
+ 
+-/**
+- * 测试用：关闭并重建 DB 实例。
+- *
+- * 语义等价于 close + init —— 测试每次 setUp 调用后,
+- * getAgentDatabase() 立即可用,无需再显式 await initDatabase()。
+- *
+- * 这样老 server 仓库里"resetForTests 后直接访问 DB"的测试代码
+- * 可以原样迁入,只需将调用点包成 async/await 即可。
+- */
+ export async function resetAgentDatabaseForTests(): Promise<void> {
+   await closeAgentDatabase()
+   await initDatabase()
+diff --git a/Cursor++/src/server/services/core/AiService.ts b/Cursor++/src/server/services/core/AiService.ts
+index a3aeb2c..8f1a110 100644
+--- a/Cursor++/src/server/services/core/AiService.ts
++++ b/Cursor++/src/server/services/core/AiService.ts
+@@ -41,6 +41,23 @@ import {
+ import { buildByokAvailableModels } from '../../handlers/models/byokModelBuilder'
+ import { flattenModels } from '../../config/providersStore'
+ import { logger } from '../../logger'
++import {
++  GetDefaultModelForCliResponseSchema,
++  GetUsableModelsResponseSchema,
++  ModelDetailsSchema,
++} from '../../gen/agent_v1_pb'
++
++/** agent.v1.ModelDetails for the CLI model catalog. */
++function cliModelDetails(m: { id: string, displayName: string }) {
++  return create(ModelDetailsSchema, {
++    modelId: m.id,
++    displayModelId: m.id,
++    displayName: m.displayName,
++    displayNameShort: m.displayName,
++    aliases: [],
++    maxMode: false,
++  })
++}
+ 
+ /**
+  * BYOK ON 模式下,客户端能命中我们这里就说明白名单生效中。
+@@ -87,6 +104,24 @@ export default (router: ConnectRouter) => {
+ 
+     availableModels: handleAvailableModels,
+ 
++    // ── CLI model catalog (cursor-agent calls these) ──
++    getUsableModels: async () => {
++      const all = flattenModels()
++      logger.info({ count: all.length }, '[MODEL] getUsableModels (CLI)')
++      return create(GetUsableModelsResponseSchema, {
++        models: all.map(x => cliModelDetails(x.model)),
++      })
++    },
++    getDefaultModelForCli: async () => {
++      const all = flattenModels()
++      const first = all.find(x => x.model.defaultOn !== false) ?? all[0]
++      if (!first)
++        return create(GetDefaultModelForCliResponseSchema, {})
++      return create(GetDefaultModelForCliResponseSchema, {
++        model: cliModelDetails(first.model),
++      })
++    },
++
+     // GetDefaultModel — 从 providers.json 推送 BYOK 默认模型到 Composer + Cmd+K
+     // 客户端逻辑: nextDefaultSetDate > lastDefaultModelSetDate → setDefaultModel(model)
+     // 返回空 {} = 不推送(客户端保留上次选择)

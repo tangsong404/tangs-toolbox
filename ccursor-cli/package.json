@@ -1,0 +1,45 @@
+{
+  "name": "@tangsong404/ccursor-cli",
+  "version": "0.1.0",
+  "description": "Run cursor-agent / agent against your own models (BYOK) via a local server.",
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "author": "tangsong404",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tangsong404/tangs-toolbox.git",
+    "directory": "ccursor-cli"
+  },
+  "homepage": "https://github.com/tangsong404/tangs-toolbox/tree/main/ccursor-cli#readme",
+  "bugs": {
+    "url": "https://github.com/tangsong404/tangs-toolbox/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "ccursor-cli": "bin/ccursor-cli.mjs",
+    "ccursor": "bin/ccursor-cli.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/cli.mjs",
+    "dist/server.cjs",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": ["cursor", "cursor-agent", "byok", "openai", "anthropic", "cli"],
+  "scripts": {
+    "bootstrap": "node scripts/bootstrap.mjs",
+    "build": "node scripts/build.mjs",
+    "serve": "node dist/server.cjs",
+    "cli": "node src/cli.mjs",
+    "prepublishOnly": "node scripts/build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.0"
+  }
+}
