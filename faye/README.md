@@ -170,3 +170,7 @@ cargo build --release --locked
 
 项目代码采用 MIT License。
 项目图标图片资源归原作者所有，不包含在 MIT 软件许可中。
+
+---
+
+感谢 [Linux.do](https://linux.do) 社区的支持。

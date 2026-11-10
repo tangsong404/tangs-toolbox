@@ -8,3 +8,7 @@ tangsong404的AI工具箱，存放一些快速验证的想法、简易使用的�
 | faye        | [单文件 Rust Agent](./faye/README.md)                 |
 | jev-apps    | [Jev 工具存放处](./jev-apps/README.md)                     |
 | skills      | [skills存放处](./skills/README.md)                         |
+
+---
+
+感谢 [Linux.do](https://linux.do) 社区的支持。
