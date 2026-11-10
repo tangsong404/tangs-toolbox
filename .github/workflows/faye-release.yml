@@ -1,0 +1,129 @@
+name: Faye release
+
+on:
+  push:
+    tags:
+      - "faye-v[0-9]+.*"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: faye
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Check version
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
+          test "faye-v${version}" = "${GITHUB_REF_NAME}" || {
+            echo "Cargo.toml version faye-v${version} does not match ${GITHUB_REF_NAME}" >&2
+            exit 1
+          }
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+
+  create-release:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "${GITHUB_REF_NAME}"; then
+            gh release create "${GITHUB_REF_NAME}" \
+              --verify-tag \
+              --draft \
+              --generate-notes \
+              --title "Faye ${GITHUB_REF_NAME#faye-}"
+          fi
+
+  build:
+    needs:
+      - validate
+      - create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install cross-compilation tools
+        if: startsWith(matrix.os, 'ubuntu')
+        uses: taiki-e/setup-cross-toolchain-action@v1
+        with:
+          target: ${{ matrix.target }}
+          runner: none
+      - name: Build and upload native binary
+        uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: faye
+          manifest-path: faye/Cargo.toml
+          target: ${{ matrix.target }}
+          archive: faye-$target
+          locked: true
+          include: faye/LICENSE,faye/README.md
+          leading-dir: true
+          tar: unix
+          zip: windows
+          checksum: sha256
+
+  upload-installers:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Upload installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            faye/install.sh \
+            faye/install.ps1 \
+            faye/uninstall.sh \
+            faye/uninstall.ps1 \
+            --clobber
+
+  publish:
+    needs: upload-installers
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "${GITHUB_REF_NAME}" --draft=false

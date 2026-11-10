@@ -1,0 +1,39 @@
+[package]
+name = "faye"
+version = "0.1.1"
+edition = "2024"
+description = "FAYE single-source Rust agent"
+license = "MIT"
+build = "build.rs"
+
+[[bin]]
+name = "faye"
+path = "faye.rs"
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+clap = { version = "4", features = ["derive"] }
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+rpassword = "7"
+rustyline = { version = "17", default-features = false, features = ["custom-bindings"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "signal", "time", "io-util"] }
+
+[build-dependencies]
+winresource = "0.1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

@@ -20,6 +20,9 @@ ccursor-cli/tools/
 ccursor-cli/*.tgz
 ccursor-cli/vendor/CCursor/Cursor++/node_modules/
 
+# ── faye build output ──
+faye/target/
+
 # ── logs ──
 logs/
 *.log
